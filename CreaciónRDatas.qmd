@@ -1,0 +1,687 @@
+---
+title: "Creación Rdatas"
+author: "LB"
+format: html
+---
+
+# Bibliotecas
+
+```{r, warning=FALSE, message=FALSE}
+library(openxlsx)
+library(dplyr)
+library(janitor)
+library(data.table)
+library(ggplot2)
+library(FactoMineR)
+library(factoextra)
+library(lubridate)
+library(stringr)
+```
+
+# Funciones auxiliares
+
+```{r}
+crea_tabla_sim <- function(tabla, vars_concepto) {
+  # Iniciar temporizador
+  tiempo_inicio <- Sys.time()
+  
+  # Crear una lista vacía para almacenar las matrices de frecuencias
+  lista_frecuencias <- list()
+  
+  # Variables que no están en vars_concepto
+  vars_otros <- setdiff(names(tabla), vars_concepto)
+  
+  # Recodificar cada variable en vars_otros como factor con todos los niveles únicos
+  tabla[, (vars_otros) := lapply(.SD, function(x) factor(x, levels = unique(x))), .SDcols = vars_otros]
+  
+  # Obtener las combinaciones únicas de las variables en vars_concepto
+  combinaciones_unicas <- unique(tabla[, ..vars_concepto])
+  
+  # Colapsar las combinaciones únicas en un vector de cadenas
+  nombres_combinaciones <- apply(combinaciones_unicas, 1, paste, collapse = "_")
+  n <- nrow(combinaciones_unicas)
+  
+  # Inicializar la barra de progreso
+  pb <- txtProgressBar(min = 0, max = length(vars_otros), style = 3)
+  
+  for (var in vars_otros) {
+    # Inicializar matriz de frecuencias
+    m <- length(levels(tabla[[var]]))
+    P_var <- matrix(0, nrow = n, ncol = m)
+    colnames(P_var) <- levels(tabla[[var]])
+    
+    # Para cada combinación única, calcular la tabla de frecuencias
+    for (i in seq_len(n)) {
+      filtro <- combinaciones_unicas[i]
+      
+      # Filtrar la tabla para la combinación actual
+      tabla_filtrada <- tabla[Reduce(`&`, lapply(vars_concepto, function(v) get(v) == filtro[[v]]))]
+      
+      # Calcular frecuencias y asignar a la matriz
+      P_var[i, ] <- prop.table(table(tabla_filtrada[[var]]))
+    }
+    
+    # Convertir la matriz a data.frame y asignar nombres
+    lista_frecuencias[[var]] <- as.data.frame(P_var)
+    rownames(lista_frecuencias[[var]]) <- nombres_combinaciones
+    
+    # Actualizar la barra de progreso
+    setTxtProgressBar(pb, which(vars_otros == var))
+  }
+  
+  # Cerrar la barra de progreso
+  close(pb)
+  
+  # Calcular y mostrar el tiempo total de ejecución
+  tiempo_final <- Sys.time()
+  tiempo_total <- tiempo_final - tiempo_inicio
+  cat("Tiempo total de ejecución:", tiempo_total, "segundos\n")
+  
+  return(lista_frecuencias)
+}
+
+```
+
+```{r}
+# Función para limpiar los valores
+limpiar_valores <- function(x) {
+  # Convertir a mayúsculas
+  x <- toupper(x)
+  
+  # Reemplazar caracteres especiales manualmente
+  x <- gsub("Ñ", "N", x)
+  x <- gsub("ñ", "n", x)
+  x <- gsub("Á", "A", x)
+  x <- gsub("É", "E", x)
+  x <- gsub("Í", "I", x)
+  x <- gsub("Ó", "O", x)
+  x <- gsub("Ú", "U", x)
+  x <- gsub("á", "A", x)
+  x <- gsub("é", "E", x)
+  x <- gsub("í", "I", x)
+  x <- gsub("ó", "O", x)
+  x <- gsub("ú", "U", x)
+
+  # Eliminar espacios en los extremos y reemplazar múltiples espacios en medio por uno solo
+  x <- str_squish(x)
+  
+  return(x)
+}
+
+```
+
+# Base OIJ
+
+## Lectura y depuración de archivos
+
+
+```{r}
+
+# Creamos un vector para almacenar las rutas de los archivos
+file_paths <- character()
+lista_tablas <- list()
+
+# Delimitacion temporal
+anno_inicial <- 2022
+anno_final <- 2022
+# Recorremos los años desde 2010 hasta 2023
+for (year in anno_inicial:anno_final) {
+  # Construimos el nombre del archivo para cada año
+  file_name <- paste0("Datos OIJ 29022024/Estadísticas Policiales ", year, ".xlsx")
+  
+  # Verificamos si el archivo existe
+  if (file.exists(file_name)) {
+    # Si el archivo existe, agregamos su ruta al vector
+    file_paths <- c(file_paths, file_name)
+    
+    tabla <- read.xlsx(file_name) %>% clean_names('snake') 
+    setDT(tabla)
+    tabla[, fecha := as.Date(fecha, origin = "1899-12-30")]
+    
+    # Contar la cantidad de filas idénticas
+    duplicated_counts <- tabla[, .N, by = names(tabla)]
+
+    # Filtrar solo los registros con más de una fila (duplicados)
+    duplicated_counts <- duplicated_counts[N > 1]
+
+    # Calcular el total de filas duplicadas
+    total_duplicated_rows <- sum(duplicated_counts$N)
+    
+    # Se revisan años y duplicidad
+    print(paste('En el año', year, 'hay', nrow(tabla[year(fecha)!=year]), 'observaciones con otros años y', total_duplicated_rows, 'filas duplicadas'))
+    
+    tabla <- tabla[year(fecha)==year] %>%
+  mutate(across(everything(), limpiar_valores))
+    
+    lista_tablas[[paste0('OIJ_', year)]] <- tabla
+    
+  } else {
+    # Si el archivo no existe, imprimimos un mensaje
+    cat("Archivo", file_name, "no encontrado.\n")
+  }
+}
+
+# Leemos todos los archivos Excel en una lista de data frames
+# lista_tablas <- lapply(file_paths, read.xlsx) 
+# Se asignan nombres significativos
+# names(lista_tablas) <- paste0('OIJ_',as.character(anno_inicial:anno_final))
+```
+
+```{r}
+
+```
+
+```{r}
+# save(lista_tablas, file = "lista_tablas_OIJ.RData")
+# load("lista_tablas.RData")
+```
+
+## Selección de columnas
+
+```{r}
+datos_OIJ <- rbindlist(lista_tablas)
+# Definir el orden de los niveles de la variable hora
+datos_OIJ$hora <- factor(datos_OIJ$hora, 
+                         levels = c("00:00:00 - 02:59:59", "03:00:00 - 05:59:59", 
+                                    "06:00:00 - 08:59:59", "09:00:00 - 11:59:59", 
+                                    "12:00:00 - 14:59:59", "15:00:00 - 17:59:59", 
+                                    "18:00:00 - 20:59:59", "21:00:00 - 23:59:59"), 
+                         ordered = TRUE)
+
+
+datos_OIJ[, fecha := as.IDate(fecha, format = "%Y-%m-%d")]
+datos_OIJ[, anno := year(fecha)]
+datos_OIJ[, mes := month(fecha, label = T, abbr = T)]
+datos_OIJ[, dia_semana := as.character(weekdays(fecha))]
+# Definir el orden de los niveles de la variable dia_semana
+datos_OIJ$dia_semana <- factor(datos_OIJ$dia_semana, 
+                               levels = c("lunes", "martes", "miércoles", "jueves", 
+                                          "viernes", "sábado", "domingo"), 
+                               ordered = TRUE)
+
+datos_OIJ[, sub_delito := NULL]
+datos_OIJ[, sub_victima := NULL]
+datos_OIJ[, victima := NULL]
+datos_OIJ[, fecha := NULL]
+datos_OIJ[, distrito := NULL]
+datos_OIJ[, canton := NULL]
+# datos_OIJ[, provincia := NULL]
+# datos_OIJ[, nacionalidad := ifelse(nacionalidad == "COSTA RICA", "COSTA RICA", "EXTRANJERO")]
+datos_OIJ[, nacionalidad := NULL]
+datos_OIJ[, anno := NULL]
+# datos_OIJ[, genero := NULL]
+datos_OIJ <- datos_OIJ  %>% mutate_all(toupper)
+datos_OIJ <- datos_OIJ[!apply(datos_OIJ, 1, function(x) any(toupper(x) == "DESCONOCIDO"))]
+datos_OIJ <- datos_OIJ %>%
+  mutate(across(where(is.character), tolower))
+
+# Definir el orden de los niveles de la variable edad
+datos_OIJ$edad <- factor(datos_OIJ$edad, 
+                         levels = c("menor de edad", "mayor de edad", "adulto mayor"), 
+                         ordered = TRUE)
+```
+
+```{r}
+# datos_OIJ <- datos_OIJ[anno == 2023]
+# datos_OIJ[, anno := NULL]
+# datos_OIJ <- datos_OIJ %>% filter(anno == 2023) %>% select(canton, delito)
+```
+
+
+## Creación de la tabla simbólica
+
+```{r}
+vars_concepto <- c("delito", "provincia")
+tabla <- datos_OIJ
+```
+
+
+```{r}
+lista.sym.OIJ <- crea_tabla_sim(tabla = datos_OIJ, vars_concepto =  vars_concepto) %>% lapply(as.matrix)
+```
+
+```{r}
+save(lista.sym.OIJ, file = "OIJ_sym_delito_prov.rdata")
+# save(lista.sym.OIJ, file = "OIJ_sym_delito_prov_anno.rdata")
+# save(lista.sym.OIJ, file = "OIJ_sym_delito_prov_canton.rdata")
+```
+
+## Matriz clásica de frecuencias observadas
+
+```{r}
+matriz_clasica <- do.call(cbind, lista.sym.OIJ)
+
+# Cargar librerías necesarias
+library(ggplot2)
+
+# Suponiendo que ya tienes la matriz 'matriz_crotas'
+# Inicializar un vector para almacenar la inercia (suma de cuadrados dentro de los grupos)
+inercia <- numeric(5)
+
+# Iterar sobre diferentes valores de K
+for (k in 2:15) {
+  kmeans_result <- kmeans(matriz_clasica, centers = k, nstart = 25)
+  inercia[k] <- kmeans_result$tot.withinss  # Total de inercia
+}
+
+# Crear un dataframe para graficar
+datos_grafico <- data.frame(K = 2:15, Inercia = inercia[2:15])
+
+# Generar el gráfico del codo
+ggplot(datos_grafico, aes(x = K, y = Inercia)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Gráfico del Codo para K-means",
+       x = "Número de Clústeres (K)",
+       y = "Inercia (Suma de cuadrados dentro de los grupos)") +
+  theme_minimal()
+
+```
+
+```{r}
+kmeans_result <- kmeans(matriz_clasica, centers = 6, nstart = 1000)
+```
+
+
+```{r}
+rownames(matriz_clasica)[kmeans_result$cluster==6]
+```
+
+```{r}
+# save(lista.sym, file = "OIJ_sym.rdata")
+```
+## Creación de clusters
+
+```{r}
+# Leer el archivo como un vector de caracteres
+clusters <- readLines("resultados_OIJ_K6.txt")
+
+# Convertir a numérico si es necesario
+clusters <- as.numeric(clusters)
+```
+
+```{r}
+rownames(matriz_clasica)[clusters==6]
+```
+
+
+```{r}
+library(openxlsx)
+
+# Crear un nuevo archivo Excel
+wb <- createWorkbook()
+
+# Convertir los nombres de las filas a caracteres
+nombres <- as.character(rownames(lista.sym$hora))
+
+# Loop para cada cluster
+for (k in 1:4) {
+  # Selecciona los nombres de los elementos en el cluster k
+  nombres_cluster <- nombres[clusters == k]
+  
+  # Convierte el resultado a data frame para que se pueda escribir en Excel
+  df <- data.frame(Nombres = nombres_cluster)
+  
+  # Agrega una hoja al workbook con el nombre "cluster k"
+  addWorksheet(wb, paste("cluster", k))
+  
+  # Escribe los datos en la hoja correspondiente
+  writeData(wb, sheet = paste("cluster", k), x = df)
+}
+
+# Guarda el archivo Excel
+saveWorkbook(wb, "Resultados OIJ Wass K=4.xlsx", overwrite = TRUE)
+
+```
+
+```{r}
+library(openxlsx)
+
+# Crear un nuevo archivo Excel
+wb <- createWorkbook()
+
+# Loop para cada cluster (suponiendo K=4 clusters)
+for (k in 1:4) {
+  # Selecciona los nombres de las filas que pertenecen al cluster k
+  nombres_cluster <- rownames(matriz_clasica)[kmeans_result$cluster == k]
+  
+  # Convierte el resultado a data frame para que se pueda escribir en Excel
+  df <- data.frame(Nombres = nombres_cluster)
+  
+  # Agrega una hoja al workbook con el nombre "cluster k"
+  addWorksheet(wb, paste("cluster", k))
+  
+  # Escribe los datos en la hoja correspondiente
+  writeData(wb, sheet = paste("cluster", k), x = df)
+}
+
+# Guarda el archivo Excel
+saveWorkbook(wb, "Resultados OIJ K=4.xlsx", overwrite = TRUE)
+
+```
+
+
+```{r}
+nombres <- rownames(lista.sym$hora)
+nombres[clusters == 4]
+```
+
+
+
+# Base  COSEVI
+
+```{r}
+base_COSEVI <- read.csv('Datos COSEVI 26022024/3 Base de personas  en accidentes 2016_ 2022_UTF8.csv', sep = ";", header = TRUE, stringsAsFactors = TRUE) %>% clean_names() 
+anos <- base_COSEVI$ano
+# base_COSEVI <- as.data.frame(lapply(base_COSEVI, as.factor)) %>% rename(gravedad = clase_de_accidente)
+# base_COSEVI$gravedad <- fct_recode(base_COSEVI$gravedad, "baja" = "Solo heridos leves", "alta" ="Con muertos o graves")
+# base_COSEVI$gravedad <- factor(base_COSEVI$gravedad, levels = c("baja", "alta"), ordered = TRUE)
+base_COSEVI <- as.data.table(base_COSEVI)
+base_COSEVI <- base_COSEVI %>%
+  mutate(across(everything(), limpiar_valores))
+base_COSEVI[, distrito := NULL]
+base_COSEVI[, edad := NULL]
+base_COSEVI[, canton := NULL]
+base_COSEVI <- base_COSEVI %>% rename(vehiculo = vehiculo_en_el_que_viajaba, tipo_lesion = tipo_de_lesion, edad = edad_quinquenal)
+base_COSEVI[, vehiculo := NULL]
+base_COSEVI[, edad := NULL]
+base_COSEVI <- base_COSEVI  %>% mutate_all(toupper)
+base_COSEVI <- base_COSEVI[!apply(base_COSEVI, 1, function(x) any(toupper(x) == "IGNORADA"))]
+base_COSEVI <- base_COSEVI[!apply(base_COSEVI, 1, function(x) any(toupper(x) == "DESCONOCIDO"))]
+base_COSEVI <- base_COSEVI[!apply(base_COSEVI, 1, function(x) any(toupper(x) == "DESCONOCIDA"))]
+base_COSEVI <- base_COSEVI[!apply(base_COSEVI, 1, function(x) any(toupper(x) == "LESION IGNORADA"))]
+base_COSEVI <- base_COSEVI[!apply(base_COSEVI, 1, function(x) any(toupper(x) == "OTRO"))]
+base_COSEVI <- base_COSEVI[!apply(base_COSEVI, 1, function(x) any(toupper(x) == "NO APLICA"))]
+base_COSEVI <- base_COSEVI %>%
+  mutate(
+    dia = substr(dia, 3, nchar(dia)),   # Elimina los primeros 2 caracteres de 'dia'
+    mes = substr(mes, 4, nchar(mes))    # Elimina los primeros 3 caracteres de 'mes'
+  )
+
+base_COSEVI <- base_COSEVI %>%
+  mutate(across(where(is.character), tolower))
+```
+
+```{r}
+vars_concepto <- c("rol", "provincia") 
+```
+
+```{r}
+lista.sym.COSEVI <- crea_tabla_sim(tabla = base_COSEVI, vars_concepto =  vars_concepto) %>% lapply(as.matrix)
+```
+
+```{r}
+# save(lista.sym.COSEVI, file = "COSEVI_sym_rol_prov.rdata")
+```
+
+
+```{r}
+matriz_clasica <- do.call(cbind, lista.sym.cosevi)
+
+# Cargar librerías necesarias
+library(ggplot2)
+
+# Suponiendo que ya tienes la matriz 'matriz_crotas'
+# Inicializar un vector para almacenar la inercia (suma de cuadrados dentro de los grupos)
+inercia <- numeric(5)
+
+# Iterar sobre diferentes valores de K
+for (k in 2:15) {
+  kmeans_result <- kmeans(matriz_clasica, centers = k, nstart = 25)
+  inercia[k] <- kmeans_result$tot.withinss  # Total de inercia
+}
+
+# Crear un dataframe para graficar
+datos_grafico <- data.frame(K = 2:15, Inercia = inercia[2:15])
+
+# Generar el gráfico del codo
+ggplot(datos_grafico, aes(x = K, y = Inercia)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Gráfico del Codo para K-means",
+       x = "Número de Clústeres (K)",
+       y = "Inercia (Suma de cuadrados dentro de los grupos)") +
+  theme_minimal()
+
+```
+
+
+```{r}
+dataset <- create.symData(lista.sym.COSEVI,"rDist")
+lider_cosevi <- leaderSO(dataset, 6,interact = FALSE, stabil = 1e-6)
+```
+
+```{r}
+kmeans_result <- lider_cosevi$clust
+
+rownames(lista.sym.COSEVI$tipo_lesion)[kmeans_result==6]
+```
+
+```{r}
+library(openxlsx)
+
+# Crear un nuevo archivo Excel
+wb <- createWorkbook()
+
+# Loop para cada cluster (suponiendo K=4 clusters)
+for (k in 1:4) {
+  # Selecciona los nombres de las filas que pertenecen al cluster k
+  nombres_cluster <- rownames(matriz_clasica)[kmeans_result$cluster == k]
+  
+  # Convierte el resultado a data frame para que se pueda escribir en Excel
+  df <- data.frame(Nombres = nombres_cluster)
+  
+  # Agrega una hoja al workbook con el nombre "cluster k"
+  addWorksheet(wb, paste("cluster", k))
+  
+  # Escribe los datos en la hoja correspondiente
+  writeData(wb, sheet = paste("cluster", k), x = df)
+}
+
+# Guarda el archivo Excel
+saveWorkbook(wb, "Resultados COSEVI Eslovenos K=4.xlsx", overwrite = TRUE)
+
+```
+
+## Creación clusters txt
+
+```{r}
+# Leer el archivo como un vector de caracteres
+clusters <- readLines("Resultados COSEVI/resultados_COSEVI_K6.txt")
+
+# Convertir a numérico si es necesario
+clusters <- as.numeric(clusters)
+
+```
+
+```{r}
+nombres <- as.character(rownames(lista.sym.COSEVI$tipo_lesion))
+nombres[clusters==6]
+```
+
+```{r}
+library(openxlsx)
+
+# Crear un nuevo archivo Excel
+wb <- createWorkbook()
+
+# Convertir los nombres de las filas a caracteres
+nombres <- as.character(rownames(lista.sym.cosevi$tipo_lesion))
+
+# Loop para cada cluster
+for (k in 1:4) {
+  # Selecciona los nombres de los elementos en el cluster k
+  nombres_cluster <- nombres[clusters == k]
+  
+  # Convierte el resultado a data frame para que se pueda escribir en Excel
+  df <- data.frame(Nombres = nombres_cluster)
+  
+  # Agrega una hoja al workbook con el nombre "cluster k"
+  addWorksheet(wb, paste("cluster", k))
+  
+  # Escribe los datos en la hoja correspondiente
+  writeData(wb, sheet = paste("cluster", k), x = df)
+}
+
+# Guarda el archivo Excel
+saveWorkbook(wb, "Resultados COSEVI Wass K=4.xlsx", overwrite = TRUE)
+
+```
+
+```{r}
+for (j in 1:7) {
+  print(paste("Nombre var:", names(base_COSEVI)[j]))
+  print("Niveles:")
+  print(paste0(unique(unique(base_COSEVI[[j]])), collapse = ", "))
+}
+```
+
+
+```{r}
+for (j in 1:8) {
+  print(paste("Nombre var:", names(datos_OIJ)[j]))
+  print("Niveles:")
+  print(paste0(unique(unique(datos_OIJ[[j]])), collapse = ", "))
+}
+```
+
+
+
+# Base Batagelj
+
+```{r}
+library(clamix)
+data(popul06f)
+data(popul06m)
+datalist <- list("M"=popul06f,"F"=popul06m)
+dataset <- create.symData(datalist,"rDist")
+res2006 <- leaderSO(dataset, 6,interact = FALSE)
+
+clusters_lider <- res2006$clust
+```
+
+```{r}
+sum(dataset$SOs$Afghanistan$M)
+```
+
+```{r}
+popul06f <- popul06f / rowSums(popul06f)
+popul06m <- popul06m / rowSums(popul06m)
+lista.sym.Batagelj <- list("M"=as.matrix(popul06f),"F"=as.matrix(popul06m))
+# save(lista.sym.Batagelj, file = "Batagelj_sym_gen.RData")
+```
+
+## Creación clusters txt
+
+```{r}
+# Leer el archivo como un vector de caracteres
+clusters <- readLines("Resultados Batagelj/resultados_Batagelj_K6.txt")
+
+# Convertir a numérico si es necesario
+clusters <- as.numeric(clusters)
+
+```
+
+```{r}
+# nombres <- as.character(rownames(lista.sym.Batagelj$M))
+nombres <- rownames(popul06f)
+sort(nombres[clusters==1])
+```
+
+```{r}
+sort(nombres[clusters_lider==2])
+```
+
+```{r}
+library(openxlsx)
+
+# Crear un nuevo archivo Excel
+wb <- createWorkbook()
+
+# Convertir los nombres de las filas a caracteres
+nombres <- as.character(rownames(lista.sym.cosevi$tipo_lesion))
+
+# Loop para cada cluster
+for (k in 1:4) {
+  # Selecciona los nombres de los elementos en el cluster k
+  nombres_cluster <- nombres[clusters == k]
+  
+  # Convierte el resultado a data frame para que se pueda escribir en Excel
+  df <- data.frame(Nombres = nombres_cluster)
+  
+  # Agrega una hoja al workbook con el nombre "cluster k"
+  addWorksheet(wb, paste("cluster", k))
+  
+  # Escribe los datos en la hoja correspondiente
+  writeData(wb, sheet = paste("cluster", k), x = df)
+}
+
+# Guarda el archivo Excel
+saveWorkbook(wb, "Resultados COSEVI Wass K=4.xlsx", overwrite = TRUE)
+
+```
+
+```{r}
+for (j in 1:7) {
+  print(paste("Nombre var:", names(base_COSEVI)[j]))
+  print("Niveles:")
+  print(paste0(unique(unique(base_COSEVI[[j]])), collapse = ", "))
+}
+```
+
+
+```{r}
+for (j in 1:8) {
+  print(paste("Nombre var:", names(datos_OIJ)[j]))
+  print("Niveles:")
+  print(paste0(unique(unique(datos_OIJ[[j]])), collapse = ", "))
+}
+```
+
+
+
+
+```{r}
+library(ggplot2)
+
+# Parámetros
+a <- -2.5
+b <- -1
+c <- -2.6
+d <- -1.1
+
+# Función para calcular densidad de una uniforme
+uniform_density <- function(x, lower, upper) {
+  ifelse(x >= lower & x <= upper, 1 / (upper - lower), 0)
+}
+
+# Rango de valores para las densidades
+x_min <- min(a, c, -(b + d - a - c)) - 1
+x_max <- max(b, d, b + d - a - c) + 1
+x_vals <- seq(x_min, x_max, length.out = 1000)
+
+# Crear los datos
+data <- data.frame(
+  x = rep(x_vals, 3),
+  density = c(
+    uniform_density(x_vals, a, b),
+    uniform_density(x_vals, c, d),
+    uniform_density(x_vals, -(b + d - a - c), b + d - a - c)
+  ),
+  distribution = factor(rep(c("U1(a,b)", "U2(c,d)", "U3(-(b+d-a-c), b+d-a-c)"), each = length(x_vals)))
+)
+
+# Graficar las densidades
+ggplot(data, aes(x = x, y = density, color = distribution)) +
+  geom_line(size = 1) +
+  labs(
+    title = "Densidades de Distribuciones Uniformes",
+    x = "x",
+    y = "Densidad",
+    color = "Distribución"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top") + cowplot::theme_cowplot() 
+
+```
+
