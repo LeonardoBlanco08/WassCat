@@ -112,7 +112,7 @@ limpiar_valores <- function(x) {
 
 # Base OIJ
 
-## Lectura y depuración de archivos
+f## Lectura y depuración de archivos
 
 
 ```{r}
@@ -290,18 +290,22 @@ rownames(matriz_clasica)[kmeans_result$cluster==6]
 ```{r}
 # save(lista.sym, file = "OIJ_sym.rdata")
 ```
+
+
+
+
 ## Creación de clusters
 
 ```{r}
 # Leer el archivo como un vector de caracteres
-clusters <- readLines("resultados_OIJ_K6.txt")
+clusters_Wass <- readLines("Resultados OIJ/resultados_OIJ_K5.txt")
 
 # Convertir a numérico si es necesario
-clusters <- as.numeric(clusters)
+clusters_Wass <- as.numeric(clusters)
 ```
 
 ```{r}
-rownames(matriz_clasica)[clusters==6]
+rownames(matriz_clasica)[clusters==1]
 ```
 
 
@@ -312,12 +316,12 @@ library(openxlsx)
 wb <- createWorkbook()
 
 # Convertir los nombres de las filas a caracteres
-nombres <- as.character(rownames(lista.sym$hora))
+nombres <- as.character(rownames(lista.sym.OIJ$hora))
 
 # Loop para cada cluster
-for (k in 1:4) {
+for (k in 1:5) {
   # Selecciona los nombres de los elementos en el cluster k
-  nombres_cluster <- nombres[clusters == k]
+  nombres_cluster <- nombres[clusters_Wass == k]
   
   # Convierte el resultado a data frame para que se pueda escribir en Excel
   df <- data.frame(Nombres = nombres_cluster)
@@ -330,33 +334,7 @@ for (k in 1:4) {
 }
 
 # Guarda el archivo Excel
-saveWorkbook(wb, "Resultados OIJ Wass K=4.xlsx", overwrite = TRUE)
-
-```
-
-```{r}
-library(openxlsx)
-
-# Crear un nuevo archivo Excel
-wb <- createWorkbook()
-
-# Loop para cada cluster (suponiendo K=4 clusters)
-for (k in 1:4) {
-  # Selecciona los nombres de las filas que pertenecen al cluster k
-  nombres_cluster <- rownames(matriz_clasica)[kmeans_result$cluster == k]
-  
-  # Convierte el resultado a data frame para que se pueda escribir en Excel
-  df <- data.frame(Nombres = nombres_cluster)
-  
-  # Agrega una hoja al workbook con el nombre "cluster k"
-  addWorksheet(wb, paste("cluster", k))
-  
-  # Escribe los datos en la hoja correspondiente
-  writeData(wb, sheet = paste("cluster", k), x = df)
-}
-
-# Guarda el archivo Excel
-saveWorkbook(wb, "Resultados OIJ K=4.xlsx", overwrite = TRUE)
+saveWorkbook(wb, "Resultados OIJ Wass K=5.xlsx", overwrite = TRUE)
 
 ```
 
@@ -367,6 +345,37 @@ nombres[clusters == 4]
 ```
 
 
+```{r}
+dataset <- create.symData(lista.sym.OIJ,"rDist")
+resOIJ <- leaderSO(dataset, 5,interact = FALSE)
+clusters_lider <- resOIJ$clust
+```
+
+```{r}
+library(openxlsx)
+
+# Crear un nuevo archivo Excel
+wb <- createWorkbook()
+
+# Loop para cada cluster (suponiendo K=4 clusters)
+for (k in 1:5) {
+  # Selecciona los nombres de las filas que pertenecen al cluster k
+  nombres_cluster <- rownames(matriz_clasica)[clusters_lider == k]
+  
+  # Convierte el resultado a data frame para que se pueda escribir en Excel
+  df <- data.frame(Nombres = nombres_cluster)
+  
+  # Agrega una hoja al workbook con el nombre "cluster k"
+  addWorksheet(wb, paste("cluster", k))
+  
+  # Escribe los datos en la hoja correspondiente
+  writeData(wb, sheet = paste("cluster", k), x = df)
+}
+
+# Guarda el archivo Excel
+saveWorkbook(wb, "Resultados OIJ Lider K=5.xlsx", overwrite = TRUE)
+
+```
 
 # Base  COSEVI
 
@@ -399,7 +408,8 @@ base_COSEVI <- base_COSEVI %>%
   )
 
 base_COSEVI <- base_COSEVI %>%
-  mutate(across(where(is.character), tolower))
+  mutate(across(where(is.character), tolower)) %>%
+  mutate(across(where(is.factor), tolower))
 ```
 
 ```{r}
@@ -538,7 +548,7 @@ for (j in 1:7) {
 
 
 ```{r}
-for (j in 1:8) {
+for (j in 1:7) {
   print(paste("Nombre var:", names(datos_OIJ)[j]))
   print("Niveles:")
   print(paste0(unique(unique(datos_OIJ[[j]])), collapse = ", "))
@@ -556,7 +566,6 @@ data(popul06m)
 datalist <- list("M"=popul06f,"F"=popul06m)
 dataset <- create.symData(datalist,"rDist")
 res2006 <- leaderSO(dataset, 6,interact = FALSE)
-
 clusters_lider <- res2006$clust
 ```
 
@@ -592,6 +601,66 @@ sort(nombres[clusters==1])
 sort(nombres[clusters_lider==2])
 ```
 
+````{r}
+library(openxlsx)
+
+# Crear un nuevo archivo Excel
+wb <- createWorkbook()
+
+# Convertir los nombres de las filas a caracteres
+nombres <- as.character(rownames(lista.sym.Batagelj$M))
+
+# Inicializar una lista para almacenar los data frames de cada cluster
+df_clusters <- list()
+
+# Loop para cada cluster
+for (k in 1:6) {
+  # Selecciona los nombres de los elementos en el cluster k
+  nombres_cluster <- nombres[clusters == k]
+  
+  # Convierte el resultado a data frame para que se pueda escribir en Excel
+  df <- data.frame(Nombres = nombres_cluster)
+  
+  # Almacenar cada data frame en la lista
+  df_clusters[[k]] <- df
+}
+
+# Obtener el tamaño máximo de los clusters
+max_rows <- max(sapply(df_clusters, nrow))
+
+# Rellenar con NA las filas faltantes para cada cluster
+df_filled <- lapply(df_clusters, function(df) {
+  # Rellenar con NA hasta el tamaño máximo
+  if (nrow(df) < max_rows) {
+    df[(nrow(df)+1):max_rows, ] <- NA
+  }
+  return(df)
+})
+
+# Combinar todos los clusters en un solo data frame
+df_combined <- do.call(cbind, df_filled)
+
+# Agregar una hoja para la combinación de todos los clusters
+addWorksheet(wb, "Clusters Combinados")
+
+# Escribir los datos combinados en la hoja correspondiente
+writeData(wb, sheet = "Clusters Combinados", x = df_combined)
+
+# Loop para cada cluster y agregar hojas separadas
+for (k in 1:6) {
+  # Agregar una hoja al workbook con el nombre "cluster k"
+  addWorksheet(wb, paste("cluster", k))
+  
+  # Escribir los datos en la hoja correspondiente
+  writeData(wb, sheet = paste("cluster", k), x = df_clusters[[k]])
+}
+
+# Guarda el archivo Excel
+saveWorkbook(wb, "Resultados Batagelj Wass K=6.xlsx", overwrite = TRUE)
+
+
+```
+
 ```{r}
 library(openxlsx)
 
@@ -599,25 +668,56 @@ library(openxlsx)
 wb <- createWorkbook()
 
 # Convertir los nombres de las filas a caracteres
-nombres <- as.character(rownames(lista.sym.cosevi$tipo_lesion))
+nombres <- as.character(rownames(lista.sym.Batagelj$M))
+
+# Inicializar una lista para almacenar los data frames de cada cluster
+df_clusters <- list()
 
 # Loop para cada cluster
-for (k in 1:4) {
+for (k in 1:6) {
   # Selecciona los nombres de los elementos en el cluster k
-  nombres_cluster <- nombres[clusters == k]
+  nombres_cluster <- nombres[clusters_lider == k]
   
   # Convierte el resultado a data frame para que se pueda escribir en Excel
   df <- data.frame(Nombres = nombres_cluster)
   
-  # Agrega una hoja al workbook con el nombre "cluster k"
+  # Almacenar cada data frame en la lista
+  df_clusters[[k]] <- df
+}
+
+# Obtener el tamaño máximo de los clusters
+max_rows <- max(sapply(df_clusters, nrow))
+
+# Rellenar con NA las filas faltantes para cada cluster
+df_filled <- lapply(df_clusters, function(df) {
+  # Rellenar con NA hasta el tamaño máximo
+  if (nrow(df) < max_rows) {
+    df[(nrow(df)+1):max_rows, ] <- NA
+  }
+  return(df)
+})
+
+# Combinar todos los clusters en un solo data frame
+df_combined <- do.call(cbind, df_filled)
+
+# Agregar una hoja para la combinación de todos los clusters
+addWorksheet(wb, "Clusters Combinados")
+
+# Escribir los datos combinados en la hoja correspondiente
+writeData(wb, sheet = "Clusters Combinados", x = df_combined)
+
+# Loop para cada cluster y agregar hojas separadas
+for (k in 1:6) {
+  # Agregar una hoja al workbook con el nombre "cluster k"
   addWorksheet(wb, paste("cluster", k))
   
-  # Escribe los datos en la hoja correspondiente
-  writeData(wb, sheet = paste("cluster", k), x = df)
+  # Escribir los datos en la hoja correspondiente
+  writeData(wb, sheet = paste("cluster", k), x = df_clusters[[k]])
 }
 
 # Guarda el archivo Excel
-saveWorkbook(wb, "Resultados COSEVI Wass K=4.xlsx", overwrite = TRUE)
+saveWorkbook(wb, "Resultados Batagelj Lider K=6.xlsx", overwrite = TRUE)
+
 
 ```
 
@@ -684,4 +784,6 @@ ggplot(data, aes(x = x, y = density, color = distribution)) +
   theme(legend.position = "top") + cowplot::theme_cowplot() 
 
 ```
+
+
 
